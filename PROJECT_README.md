@@ -15,6 +15,7 @@ This system analyzes historical spending data and generates accurate forecasts f
 ## 📈 **Key Features**
 
 - ✅ **Multiple Forecasting Methods**: Three different statistical approaches
+- ✅ **Weekly Adjustment Algorithm**: Accounts for 4-week vs 5-week month differences
 - ✅ **Professional Excel Reports**: Auto-fitted columns with currency formatting
 - ✅ **Web Interface**: Interactive dashboard with charts and graphs
 - ✅ **Confidence Levels**: Data quality indicators (High/Medium/Low)
@@ -30,7 +31,7 @@ python accruals_main.py
 
 ### **Option 2: Web Interface (Great for presentations)**
 ```bash
-python -m streamlit run web_interface.py
+python -m streamlit run app.py
 ```
 
 ### **Option 3: Batch Files (Windows)**
@@ -53,7 +54,7 @@ Accurals/
 │   └── Actual.xlsx              # Your monthly spending data
 ├── Output/                      # Generated forecast reports
 ├── accruals_main.py            # Main forecasting system
-├── web_interface.py            # Interactive web dashboard
+├── app.py                      # Interactive web dashboard
 ├── run_forecast.bat            # Windows batch file for easy execution
 ├── run_web_interface.bat       # Web interface launcher
 └── README.md                   # This file
@@ -68,11 +69,13 @@ Accurals/
 
 ## 📊 **Sample Results**
 
-**August 2025 Forecast Example:**
-- Simple Average: $102,493.62
-- Weighted Average: $101,586.89
-- Trending Average: $98,866.67
-- **RECOMMENDED: $100,982.39**
+**August 2025 Forecast Example (Weekly-Adjusted):**
+- Simple Average: $93,477.70
+- Weighted Average: $92,728.20
+- Trending Average: $90,479.71
+- **RECOMMENDED: $92,228.53**
+
+*Note: Results include weekly adjustment for calendar month differences*
 
 ## 🎨 **Web Interface Features**
 
@@ -87,17 +90,24 @@ Accurals/
 
 ### **Forecasting Methods**
 
-1. **Simple Average**
-   - Arithmetic mean of historical data
+1. **Simple Average (Weekly-Adjusted)**
+   - Arithmetic mean of normalized weekly rates
+   - Adjusted for 4-week vs 5-week month patterns
    - Best for stable spending patterns
 
-2. **Weighted Average**
-   - Recent months receive higher weights
-   - Better for capturing trends
+2. **Weighted Average (Weekly-Adjusted)**
+   - Recent months receive higher weights on weekly rates
+   - Better for capturing trends with calendar normalization
 
-3. **Trending Average**
-   - Linear regression extrapolation
+3. **Trending Average (Weekly-Adjusted)**
+   - Linear regression on normalized weekly rates
    - Accounts for increasing/decreasing patterns
+   - Eliminates calendar month bias
+
+### **Weekly Adjustment Algorithm**
+- **5-Week Months**: January, April, July, October
+- **4-Week Months**: All other months
+- **Process**: Historical values → Weekly rates → Forecasting → Target month conversion
 
 ### **Confidence Calculation**
 - **High**: Coefficient of Variation < 0.2
@@ -115,7 +125,7 @@ Accurals/
 ## 🌐 **Web Interface Setup**
 
 1. Install dependencies: `pip install streamlit plotly`
-2. Run: `python -m streamlit run web_interface.py`
+2. Run: `python -m streamlit run app.py`
 3. Open browser to: `http://localhost:8501`
 4. Upload Excel file and view interactive results
 

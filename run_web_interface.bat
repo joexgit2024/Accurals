@@ -11,6 +11,6 @@ echo ================================================
 echo.
 
 cd /d "c:\Accurals"
-C:/Users/JX1040/AppData/Local/Microsoft/WindowsApps/python3.12.exe -m streamlit run web_interface.py
+C:/Users/JX1040/AppData/Local/Microsoft/WindowsApps/python3.12.exe -m streamlit run app.py
 
 pause

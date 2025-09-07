@@ -103,21 +103,21 @@ If you decide to create the web interface:
 pip install streamlit plotly
 
 # Run the web interface
-streamlit run web_interface.py
+streamlit run app.py
 ```
 
 This will create a local web server at `http://localhost:8501` with:
 - File upload interface
 - Interactive charts
 - Real-time forecasting
-- Export capabilitiesC:/Users/JX1040/AppData/Local/Microsoft/WindowsApps/python3.12.exe -m streamlit run web_interface.py
+- Export capabilitiesC:/Users/JX1040/AppData/Local/Microsoft/WindowsApps/python3.12.exe -m streamlit run app.py
 
 # How to Run the Web Interface
 
 To launch the interactive web dashboard, use the following command in PowerShell or the VS Code terminal:
 
 ```
-C:/Users/JX1040/AppData/Local/Microsoft/WindowsApps/python3.12.exe -m streamlit run web_interface.py
+C:/Users/JX1040/AppData/Local/Microsoft/WindowsApps/python3.12.exe -m streamlit run app.py
 ```
 
 - This will start the Streamlit server and open the dashboard at http://localhost:8501 in your browser.

@@ -43,35 +43,65 @@ class AccrualsSystem:
             print(f"✗ Error loading data: {str(e)}")
             return False
     
+    def get_weeks_in_month(self, month):
+        """Get number of weeks in a month (4 or 5 week pattern)"""
+        # Jan=1, Feb=2, ..., Dec=12
+        five_week_months = [1, 4, 7, 10]  # Jan, Apr, Jul, Oct
+        return 5 if month in five_week_months else 4
+    
+    def normalize_to_weekly_rate(self, value, month):
+        """Convert monthly value to weekly rate"""
+        weeks_in_month = self.get_weeks_in_month(month)
+        return value / weeks_in_month if value > 0 else 0
+    
+    def convert_weekly_to_monthly(self, weekly_rate, target_month):
+        """Convert weekly rate to monthly value"""
+        weeks_in_target_month = self.get_weeks_in_month(target_month)
+        return weekly_rate * weeks_in_target_month
+    
     def analyze_category(self, row):
-        """Analyze a single expense category and generate forecasts"""
+        """Analyze a single expense category and generate forecasts with weekly normalization"""
         category = row['Row Labels']
         
-        # Extract historical spending (exclude future months)
+        # Extract historical spending with weekly normalization
         historical_values = []
-        for month_col in self.monthly_columns[:7]:  # Jan-Jul 2025
+        historical_weekly_rates = []
+        historical_months = []
+        
+        for i, month_col in enumerate(self.monthly_columns[:7]):  # Jan-Jul 2025
             value = row[month_col]
             if pd.notna(value) and value > 0:
+                month_num = month_col.month
+                weekly_rate = self.normalize_to_weekly_rate(float(value), month_num)
+                
                 historical_values.append(float(value))
+                historical_weekly_rates.append(weekly_rate)
+                historical_months.append(month_num)
         
         if len(historical_values) == 0:
             return self._zero_forecast(row)
         
-        # Method 1: Simple Average
-        simple_avg = np.mean(historical_values)
+        # Target month for forecast (August = 8)
+        target_month = 8
+        
+        # Method 1: Simple Average (based on weekly rates)
+        avg_weekly_rate = np.mean(historical_weekly_rates)
+        simple_avg = self.convert_weekly_to_monthly(avg_weekly_rate, target_month)
         
         # Method 2: Weighted Average (recent months get higher weight)
-        n = len(historical_values)
+        n = len(historical_weekly_rates)
         weights = np.arange(1, n + 1) / sum(range(1, n + 1))
-        weighted_avg = np.average(historical_values, weights=weights)
+        weighted_avg_weekly = np.average(historical_weekly_rates, weights=weights)
+        weighted_avg = self.convert_weekly_to_monthly(weighted_avg_weekly, target_month)
         
-        # Method 3: Trending Average
-        if len(historical_values) >= 2:
-            # Linear regression for trend
-            x = np.arange(len(historical_values))
-            coeffs = np.polyfit(x, historical_values, 1)
-            trend_forecast = coeffs[0] * len(historical_values) + coeffs[1]
-            trend_forecast = max(0, trend_forecast)  # No negative forecasts
+        # Method 3: Trending Average (based on weekly rates)
+        if len(historical_weekly_rates) >= 2:
+            # Linear regression for trend on weekly rates
+            x = np.arange(len(historical_weekly_rates))
+            coeffs = np.polyfit(x, historical_weekly_rates, 1)
+            trend_weekly_rate = coeffs[0] * len(historical_weekly_rates) + coeffs[1]
+            trend_weekly_rate = max(0, trend_weekly_rate)  # No negative forecasts
+            trend_forecast = self.convert_weekly_to_monthly(trend_weekly_rate, target_month)
         else:
             trend_forecast = simple_avg
         
@@ -85,12 +115,15 @@ class AccrualsSystem:
             'Historical_Months': len(historical_values),
             'Historical_Average': round(np.mean(historical_values), 2),
             'Historical_Total': round(sum(historical_values), 2),
+            'Avg_Weekly_Rate': round(avg_weekly_rate, 2),
             'Simple_Average': round(simple_avg, 2),
             'Weighted_Average': round(weighted_avg, 2),
             'Trending_Average': round(trend_forecast, 2),
             'Recommended_Accrual': round(recommendation, 2),
+            'Target_Month_Weeks': self.get_weeks_in_month(target_month),
             'Confidence': self._calculate_confidence(historical_values),
-            'Recent_Values': [round(v, 2) for v in historical_values[-3:]]
+            'Recent_Values': [round(v, 2) for v in historical_values[-3:]],
+            'Weekly_Adjustment': 'Applied (4/5 week normalization)'
         }
     
     def _zero_forecast(self, row):
@@ -102,12 +135,15 @@ class AccrualsSystem:
             'Historical_Months': 0,
             'Historical_Average': 0,
             'Historical_Total': 0,
+            'Avg_Weekly_Rate': 0,
             'Simple_Average': 0,
             'Weighted_Average': 0,
             'Trending_Average': 0,
             'Recommended_Accrual': 0,
+            'Target_Month_Weeks': self.get_weeks_in_month(8),  # August
             'Confidence': 'No Data',
-            'Recent_Values': []
+            'Recent_Values': [],
+            'Weekly_Adjustment': 'Not Applied (No Data)'
         }
     
     def _calculate_confidence(self, values):
@@ -129,7 +165,8 @@ class AccrualsSystem:
         if not self.load_data():
             return False
         
-        print("Generating forecasts...")
+        print("Generating weekly-adjusted forecasts...")
+        print("Weekly pattern: Jan/Apr/Jul/Oct = 5 weeks, Others = 4 weeks")
         self.results = []
         
         for idx, row in self.data.iterrows():
@@ -205,7 +242,7 @@ class AccrualsSystem:
             ws_detailed = writer.sheets['Detailed_Forecasts']
             
             # Auto-fit columns for Detailed Forecasts
-            currency_cols = ['Simple_Average', 'Weighted_Average', 'Trending_Average', 'Recommended_Accrual', 'Historical_Average', 'Historical_Total']
+            currency_cols = ['Simple_Average', 'Weighted_Average', 'Trending_Average', 'Recommended_Accrual', 'Historical_Average', 'Historical_Total', 'Avg_Weekly_Rate']
             
             for i, col in enumerate(df.columns):
                 max_len = max(
@@ -230,7 +267,7 @@ class AccrualsSystem:
             ]
             
             for method_col, sheet_name in methods:
-                method_df = df[['Category', 'SAP_Code', 'GL_Code', method_col, 'Confidence', 'Historical_Months']].copy()
+                method_df = df[['Category', 'SAP_Code', 'GL_Code', method_col, 'Confidence', 'Historical_Months', 'Target_Month_Weeks', 'Weekly_Adjustment']].copy()
                 method_df.to_excel(writer, sheet_name=sheet_name, index=False)
                 
                 ws_method = writer.sheets[sheet_name]
@@ -263,10 +300,12 @@ class AccrualsSystem:
         df = pd.DataFrame(self.results)
         
         print("\n" + "="*80)
-        print("ACCRUALS FORECAST SUMMARY - AUGUST 2025")
+        print("ACCRUALS FORECAST SUMMARY - AUGUST 2025 (WEEKLY-ADJUSTED)")
         print("="*80)
         print(f"Analysis completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Categories analyzed: {len(self.results)}")
+        print(f"Weekly adjustment: Jan/Apr/Jul/Oct = 5 weeks, Others = 4 weeks")
+        print(f"Target month (August): 4 weeks")
         
         print(f"\nFORECAST TOTALS:")
         print(f"Simple Average:    ${df['Simple_Average'].sum():>12,.2f}")
@@ -274,11 +313,12 @@ class AccrualsSystem:
         print(f"Trending Average:  ${df['Trending_Average'].sum():>12,.2f}")
         print(f"RECOMMENDED:       ${df['Recommended_Accrual'].sum():>12,.2f}")
         
-        print(f"\nCATEGORY BREAKDOWN:")
+        print(f"\nCATEGORY BREAKDOWN (Weekly-Adjusted):")
         print("-" * 80)
         for result in self.results:
             if result['Recommended_Accrual'] > 0:
-                print(f"{result['Category']:<40} ${result['Recommended_Accrual']:>10,.2f} ({result['Confidence']})")
+                avg_weekly = result.get('Avg_Weekly_Rate', 0)
+                print(f"{result['Category']:<40} ${result['Recommended_Accrual']:>10,.2f} ({result['Confidence']}) [${avg_weekly:.2f}/week]")
         
         print("="*80)
 
