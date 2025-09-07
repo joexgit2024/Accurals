@@ -30,10 +30,38 @@ class AccrualsSystem:
             self.data = pd.read_excel(self.input_file)
             
             # Find datetime columns (monthly data)
-            self.monthly_columns = [col for col in self.data.columns if isinstance(col, datetime)]
-            self.monthly_columns.sort()
+            all_monthly_columns = [col for col in self.data.columns if isinstance(col, datetime)]
+            all_monthly_columns.sort()
             
-            print(f"✓ Loaded data: {len(self.data)} categories, {len(self.monthly_columns)} months")
+            # Only include columns that have actual data (not all NaN)
+            self.monthly_columns = []
+            for col in all_monthly_columns:
+                if not self.data[col].isna().all():  # If column has at least some data
+                    self.monthly_columns.append(col)
+            
+            # Determine the next month to forecast
+            if self.monthly_columns:
+                last_month = self.monthly_columns[-1]
+                # Calculate next month
+                if last_month.month == 12:
+                    self.target_month = 1  # January of next year
+                    self.target_year = last_month.year + 1
+                else:
+                    self.target_month = last_month.month + 1
+                    self.target_year = last_month.year
+                
+                # Store target month name for display
+                month_names = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+                              'July', 'August', 'September', 'October', 'November', 'December']
+                self.target_month_name = month_names[self.target_month]
+            else:
+                self.target_month = 8  # Default fallback
+                self.target_year = 2025
+                self.target_month_name = 'August'
+            
+            print(f"✓ Loaded data: {len(self.data)} categories, {len(self.monthly_columns)} months with data")
+            print(f"✓ Data range: {self.monthly_columns[0].strftime('%B %Y')} - {self.monthly_columns[-1].strftime('%B %Y')}")
+            print(f"✓ Next month to forecast: {self.target_month_name} {self.target_year}")
             return True
             
         except FileNotFoundError:
@@ -68,7 +96,7 @@ class AccrualsSystem:
         historical_weekly_rates = []
         historical_months = []
         
-        for i, month_col in enumerate(self.monthly_columns[:7]):  # Jan-Jul 2025
+        for i, month_col in enumerate(self.monthly_columns):  # Use all available months
             value = row[month_col]
             if pd.notna(value) and value > 0:
                 month_num = month_col.month
@@ -81,8 +109,8 @@ class AccrualsSystem:
         if len(historical_values) == 0:
             return self._zero_forecast(row)
         
-        # Target month for forecast (August = 8)
-        target_month = 8
+        # Use dynamic target month 
+        target_month = self.target_month
         
         # Method 1: Simple Average (based on weekly rates)
         avg_weekly_rate = np.mean(historical_weekly_rates)
@@ -140,7 +168,7 @@ class AccrualsSystem:
             'Weighted_Average': 0,
             'Trending_Average': 0,
             'Recommended_Accrual': 0,
-            'Target_Month_Weeks': self.get_weeks_in_month(8),  # August
+            'Target_Month_Weeks': self.get_weeks_in_month(self.target_month),
             'Confidence': 'No Data',
             'Recent_Values': [],
             'Weekly_Adjustment': 'Not Applied (No Data)'
@@ -175,6 +203,334 @@ class AccrualsSystem:
         
         return True
     
+    def export_html_report(self, output_file=None):
+        """Export results to a beautiful HTML report"""
+        os.makedirs('Output', exist_ok=True)
+        
+        # Generate unique filename if not specified
+        if output_file is None:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            output_file = f'Output/Accruals_Forecast_Report_{timestamp}.html'
+        
+        df = pd.DataFrame(self.results)
+        
+        # Calculate totals
+        totals = {
+            'Simple_Average_Total': df['Simple_Average'].sum(),
+            'Weighted_Average_Total': df['Weighted_Average'].sum(),
+            'Trending_Average_Total': df['Trending_Average'].sum(),
+            'Recommended_Total': df['Recommended_Accrual'].sum()
+        }
+        
+        html_content = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Accruals Forecast Report - {datetime.now().strftime('%B %Y')}</title>
+    <style>
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }}
+        .header {{
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }}
+        .header h1 {{
+            margin: 0;
+            font-size: 2.5em;
+            font-weight: 300;
+        }}
+        .header p {{
+            margin: 10px 0 0 0;
+            font-size: 1.2em;
+            opacity: 0.9;
+        }}
+        .metrics {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 30px;
+            background: #f8f9fa;
+        }}
+        .metric-card {{
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+            transition: transform 0.3s ease;
+        }}
+        .metric-card:hover {{
+            transform: translateY(-5px);
+        }}
+        .metric-card.recommended {{
+            background: linear-gradient(135deg, #FF6B6B, #FF8E8E);
+            color: white;
+        }}
+        .metric-title {{
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
+        .metric-card.recommended .metric-title {{
+            color: rgba(255,255,255,0.9);
+        }}
+        .metric-value {{
+            font-size: 2.2em;
+            font-weight: bold;
+            color: #2c3e50;
+        }}
+        .metric-card.recommended .metric-value {{
+            color: white;
+        }}
+        .section {{
+            padding: 30px;
+        }}
+        .section h2 {{
+            color: #2c3e50;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+            margin-bottom: 25px;
+            font-size: 1.8em;
+        }}
+        .info-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }}
+        .info-card {{
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #4CAF50;
+        }}
+        .info-card h3 {{
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+        }}
+        .table-container {{
+            overflow-x: auto;
+            margin: 20px 0;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }}
+        th, td {{
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }}
+        th {{
+            background: #4CAF50;
+            color: white;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+        }}
+        tr:hover {{
+            background: #f5f5f5;
+        }}
+        .currency {{
+            text-align: right;
+            font-weight: 600;
+            color: #2c3e50;
+        }}
+        .confidence-high {{ background: #d4edda; color: #155724; padding: 4px 8px; border-radius: 4px; }}
+        .confidence-medium {{ background: #fff3cd; color: #856404; padding: 4px 8px; border-radius: 4px; }}
+        .confidence-low {{ background: #f8d7da; color: #721c24; padding: 4px 8px; border-radius: 4px; }}
+        .footer {{
+            background: #2c3e50;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }}
+        .methodology {{
+            background: #e8f4fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }}
+        .chart-placeholder {{
+            background: #f8f9fa;
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            color: #666;
+            margin: 20px 0;
+        }}
+        @media (max-width: 768px) {{
+            .metrics {{
+                grid-template-columns: 1fr;
+            }}
+            .info-grid {{
+                grid-template-columns: 1fr;
+            }}
+            .header h1 {{
+                font-size: 2em;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Accruals Forecast Report</h1>
+            <p>Weekly-Adjusted Predictions for {datetime.now().strftime('%B %Y')}</p>
+            <p>Generated on {datetime.now().strftime('%A, %B %d, %Y at %I:%M %p')}</p>
+        </div>
+        
+        <div class="metrics">
+            <div class="metric-card">
+                <div class="metric-title">Simple Average</div>
+                <div class="metric-value">${totals['Simple_Average_Total']:,.2f}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">Weighted Average</div>
+                <div class="metric-value">${totals['Weighted_Average_Total']:,.2f}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">Trending Average</div>
+                <div class="metric-value">${totals['Trending_Average_Total']:,.2f}</div>
+            </div>
+            <div class="metric-card recommended">
+                <div class="metric-title">RECOMMENDED ACCRUAL</div>
+                <div class="metric-value">${totals['Recommended_Total']:,.2f}</div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>📈 Forecasting Summary</h2>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>🎯 Methodology</h3>
+                    <p>Three forecasting methods with weekly adjustment algorithm for improved accuracy.</p>
+                    <p><strong>Weekly Pattern:</strong> Jan/Apr/Jul/Oct = 5 weeks, Others = 4 weeks</p>
+                </div>
+                <div class="info-card">
+                    <h3>📊 Analysis Period</h3>
+                    <p><strong>Historical Data:</strong> {len(self.monthly_columns)} months ({self.monthly_columns[0].strftime('%B %Y')} - {self.monthly_columns[-1].strftime('%B %Y')})</p>
+                    <p><strong>Forecast Target:</strong> {self.target_month_name} {self.target_year} ({self.get_weeks_in_month(self.target_month)} weeks)</p>
+                    <p><strong>Categories Analyzed:</strong> {len(df)} expense categories</p>
+                </div>
+                <div class="info-card">
+                    <h3>🔍 Data Quality</h3>
+                    <p><strong>High Confidence:</strong> {len(df[df['Confidence'] == 'High'])} categories</p>
+                    <p><strong>Medium Confidence:</strong> {len(df[df['Confidence'] == 'Medium'])} categories</p>
+                    <p><strong>Low Confidence:</strong> {len(df[df['Confidence'] == 'Low'])} categories</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>📋 Detailed Category Breakdown</h2>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Weekly Rate</th>
+                            <th>Simple Average</th>
+                            <th>Weighted Average</th>
+                            <th>Trending Average</th>
+                            <th>Recommended</th>
+                            <th>Confidence</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+"""
+        
+        # Add table rows
+        for _, row in df.iterrows():
+            confidence_class = f"confidence-{row['Confidence'].lower().replace(' ', '-')}"
+            html_content += f"""
+                        <tr>
+                            <td><strong>{row['Category']}</strong></td>
+                            <td class="currency">${row.get('Avg_Weekly_Rate', 0):,.2f}/week</td>
+                            <td class="currency">${row['Simple_Average']:,.2f}</td>
+                            <td class="currency">${row['Weighted_Average']:,.2f}</td>
+                            <td class="currency">${row['Trending_Average']:,.2f}</td>
+                            <td class="currency"><strong>${row['Recommended_Accrual']:,.2f}</strong></td>
+                            <td><span class="{confidence_class}">{row['Confidence']}</span></td>
+                        </tr>
+"""
+        
+        html_content += f"""
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>🔬 Methodology Explanation</h2>
+            <div class="methodology">
+                <h3>Weekly Adjustment Algorithm</h3>
+                <p>To improve forecast accuracy, the system normalizes historical spending to weekly rates before applying forecasting methods:</p>
+                <ol>
+                    <li><strong>Normalization:</strong> Monthly values ÷ Number of weeks = Weekly rate</li>
+                    <li><strong>Forecasting:</strong> Apply statistical methods to weekly rates</li>
+                    <li><strong>Conversion:</strong> Weekly rate × Target month weeks = Final forecast</li>
+                </ol>
+                <p><strong>5-Week Months:</strong> January, April, July, October<br>
+                <strong>4-Week Months:</strong> February, March, May, June, August, September, November, December</p>
+            </div>
+            
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>Simple Average Method</h3>
+                    <p>Calculates the arithmetic mean of normalized weekly rates. Best for stable, consistent spending patterns.</p>
+                </div>
+                <div class="info-card">
+                    <h3>Weighted Average Method</h3>
+                    <p>Gives more weight to recent months when calculating weekly rates. Better for capturing recent trends.</p>
+                </div>
+                <div class="info-card">
+                    <h3>Trending Average Method</h3>
+                    <p>Uses linear regression on weekly rates to project future trends. Accounts for increasing or decreasing patterns.</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Generated by Accruals Forecasting System v2.0 | Weekly-Adjusted Algorithm</p>
+            <p>📧 For questions or support, contact your Finance Team</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+        
+        # Write HTML file
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        
+        print(f"✓ HTML report exported to: {output_file}")
+        return output_file
+    
     def export_results(self, output_file=None):
         """Export results to Excel with enhanced formatting and auto-fit columns"""
         os.makedirs('Output', exist_ok=True)
@@ -183,6 +539,10 @@ class AccrualsSystem:
         if output_file is None:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             output_file = f'Output/Accruals_Forecast_{timestamp}.xlsx'
+        else:
+            # Ensure the file goes to the Output directory
+            if not output_file.startswith('Output/'):
+                output_file = f'Output/{output_file}'
         
         df = pd.DataFrame(self.results)
         
@@ -300,12 +660,12 @@ class AccrualsSystem:
         df = pd.DataFrame(self.results)
         
         print("\n" + "="*80)
-        print("ACCRUALS FORECAST SUMMARY - AUGUST 2025 (WEEKLY-ADJUSTED)")
+        print(f"ACCRUALS FORECAST SUMMARY - {self.target_month_name.upper()} {self.target_year} (WEEKLY-ADJUSTED)")
         print("="*80)
         print(f"Analysis completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Categories analyzed: {len(self.results)}")
         print(f"Weekly adjustment: Jan/Apr/Jul/Oct = 5 weeks, Others = 4 weeks")
-        print(f"Target month (August): 4 weeks")
+        print(f"Target month ({self.target_month_name}): {self.get_weeks_in_month(self.target_month)} weeks")
         
         print(f"\nFORECAST TOTALS:")
         print(f"Simple Average:    ${df['Simple_Average'].sum():>12,.2f}")
@@ -332,14 +692,19 @@ def main():
     
     # Generate forecasts
     if system.generate_forecasts():
-        # Export results
-        output_file = system.export_results()
+        # Export Excel results
+        excel_file = system.export_results()
+        
+        # Export HTML results
+        html_file = system.export_html_report()
         
         # Print summary
         system.print_summary()
         
         print(f"\n✓ Process completed successfully!")
-        print(f"📊 Excel report: {output_file}")
+        print(f"📊 Excel report: {excel_file}")
+        print(f"🌐 HTML report: {html_file}")
+        print(f"💡 Share the HTML file with colleagues - opens in any browser!")
         
     else:
         print("✗ Forecasting failed. Please check your input file.")

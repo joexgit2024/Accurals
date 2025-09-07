@@ -17,6 +17,7 @@ This system analyzes historical spending data and generates accurate forecasts f
 - ✅ **Multiple Forecasting Methods**: Three different statistical approaches
 - ✅ **Weekly Adjustment Algorithm**: Accounts for 4-week vs 5-week month differences
 - ✅ **Professional Excel Reports**: Auto-fitted columns with currency formatting
+- ✅ **Beautiful HTML Reports**: Shareable web-format reports for colleagues
 - ✅ **Web Interface**: Interactive dashboard with charts and graphs
 - ✅ **Confidence Levels**: Data quality indicators (High/Medium/Low)
 - ✅ **Easy Monthly Updates**: Simple workflow for regular forecasting
@@ -28,14 +29,22 @@ This system analyzes historical spending data and generates accurate forecasts f
 ```bash
 python accruals_main.py
 ```
+*Generates both Excel and HTML reports*
 
-### **Option 2: Web Interface (Great for presentations)**
+### **Option 2: HTML Report Only (Perfect for sharing)**
+```bash
+python generate_html_report.py
+```
+*Creates beautiful HTML report for colleagues*
+
+### **Option 3: Web Interface (Great for presentations)**
 ```bash
 python -m streamlit run app.py
 ```
 
-### **Option 3: Batch Files (Windows)**
-- Double-click `run_forecast.bat` for Excel reports
+### **Option 4: Batch Files (Windows)**
+- Double-click `run_forecast.bat` for Excel + HTML reports
+- Double-click `generate_html_report.bat` for HTML report only
 - Double-click `run_web_interface.bat` for web dashboard
 
 ## 📋 **Requirements**

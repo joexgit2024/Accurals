@@ -64,6 +64,13 @@ def main():
             if system.generate_forecasts():
                 results_df = pd.DataFrame(system.results)
                 
+                # Dynamic title with forecast month
+                st.header(f"🎯 {system.target_month_name} {system.target_year} Forecast Results")
+                st.markdown(f"**Weekly-Adjusted Forecast • {system.get_weeks_in_month(system.target_month)} weeks • Based on {len(system.monthly_columns)} months of historical data**")
+                
+                # Display data range
+                st.info(f"📊 Historical Data: {system.monthly_columns[0].strftime('%B %Y')} - {system.monthly_columns[-1].strftime('%B %Y')}")
+                
                 # Main dashboard
                 col1, col2, col3, col4 = st.columns(4)
                 
@@ -110,14 +117,14 @@ def main():
                     methods_data,
                     x='Method',
                     y='Amount',
-                    title='Forecast Comparison by Method',
+                    title=f'{system.target_month_name} {system.target_year} Forecast Comparison by Method',
                     color='Method'
                 )
                 fig_bar.update_layout(yaxis_tickformat='$,.0f')
                 st.plotly_chart(fig_bar, use_container_width=True)
                 
                 # Category breakdown
-                st.header("📋 Category Breakdown")
+                st.header(f"📋 {system.target_month_name} {system.target_year} Category Breakdown")
                 
                 # Filter out zero values for cleaner display
                 non_zero_results = results_df[results_df['Recommended_Accrual'] > 0]
@@ -127,12 +134,12 @@ def main():
                         non_zero_results,
                         values='Recommended_Accrual',
                         names='Category',
-                        title='Recommended Accruals by Category'
+                        title=f'{system.target_month_name} {system.target_year} - Recommended Accruals by Category'
                     )
                     st.plotly_chart(fig_pie, use_container_width=True)
                 
                 # Detailed results table
-                st.header("📊 Detailed Results")
+                st.header(f"📊 {system.target_month_name} {system.target_year} - Detailed Results")
                 
                 # Display options
                 show_columns = st.multiselect(
@@ -153,18 +160,24 @@ def main():
                 # Export section
                 st.header("💾 Export Results")
                 
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    if st.button("Generate Excel Report"):
+                    if st.button("📊 Generate Excel Report"):
                         output_file = system.export_results("forecast_results.xlsx")
                         st.success(f"Excel report generated: {output_file}")
                 
                 with col2:
+                    if st.button("🌐 Generate HTML Report"):
+                        html_file = system.export_html_report()
+                        st.success(f"HTML report generated: {html_file}")
+                        st.info("💡 Share this HTML file with colleagues - they can open it in any web browser!")
+                
+                with col3:
                     # Download link for CSV
                     csv = results_df.to_csv(index=False)
                     st.download_button(
-                        label="Download as CSV",
+                        label="📥 Download as CSV",
                         data=csv,
                         file_name=f"accruals_forecast_{datetime.now().strftime('%Y%m%d')}.csv",
                         mime="text/csv"
