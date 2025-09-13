@@ -18,6 +18,7 @@ from datetime import datetime
 import io
 import base64
 import sqlite3
+import os
 
 # Import our main forecasting system
 from accruals_main import AccrualsSystem
@@ -70,12 +71,21 @@ def generate_forecast_page(db_manager):
     # Sidebar for configuration
     st.sidebar.header("Configuration")
     
-    # File upload
-    uploaded_file = st.sidebar.file_uploader(
-        "Upload your Excel file",
-        type=['xlsx', 'xls'],
-        help="Upload your actual spending Excel file"
+    # Option to use default file or upload new one
+    use_default = st.sidebar.checkbox(
+        "Use default file (Input/Actual.xlsx)", 
+        value=True,
+        help="Check this to use the default Input/Actual.xlsx file"
     )
+    
+    uploaded_file = None
+    if not use_default:
+        # File upload
+        uploaded_file = st.sidebar.file_uploader(
+            "Upload your Excel file",
+            type=['xlsx', 'xls'],
+            help="Upload your actual spending Excel file"
+        )
     
     # Forecast version name
     version_name = st.sidebar.text_input(
@@ -83,14 +93,42 @@ def generate_forecast_page(db_manager):
         placeholder="Auto-generated if empty"
     )
     
-    if uploaded_file is not None:
+    # Submit button
+    submit_forecast = st.sidebar.button(
+        "🚀 Generate Forecast",
+        type="primary",
+        help="Click to generate forecast with current settings"
+    )
+    
+    # Process forecast when button is clicked
+    if submit_forecast:
         try:
-            # Save uploaded file temporarily
-            with open("temp_upload.xlsx", "wb") as f:
-                f.write(uploaded_file.getbuffer())
+            # Determine which file to use
+            if use_default:
+                # Use default file path
+                input_file = "Input/Actual.xlsx"
+                
+                # Check if default file exists
+                if not os.path.exists(input_file):
+                    st.error(f"❌ Default file not found: {input_file}")
+                    st.info("Please ensure the file exists or upload a new file.")
+                    return
+                    
+                st.info(f"📁 Using default file: {input_file}")
+                
+            elif uploaded_file is not None:
+                # Save uploaded file temporarily
+                input_file = "temp_upload.xlsx"
+                with open(input_file, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                st.info(f"📁 Using uploaded file: {uploaded_file.name}")
+                
+            else:
+                st.warning("⚠️ Please either check 'Use default file' or upload an Excel file.")
+                return
             
             # Initialize forecasting system
-            system = AccrualsSystem(input_file="temp_upload.xlsx", enable_database=True)
+            system = AccrualsSystem(input_file=input_file, enable_database=True)
             
             if system.generate_forecasts():
                 # Store with custom version name if provided
@@ -254,38 +292,99 @@ def generate_forecast_page(db_manager):
                     """)
                 
             else:
-                st.error("Failed to process the uploaded file. Please check the file format.")
+                st.error("Failed to process the file. Please check the file format.")
                 
         except Exception as e:
             st.error(f"Error processing file: {str(e)}")
     
     else:
         # Welcome screen
-        st.info("👆 Upload your Excel file to get started")
+        st.info("👆 Configure your settings and click 'Generate Forecast' to get started")
         
         st.markdown("""
         ### How to use this system:
         
-        1. **Upload** your actual spending Excel file using the sidebar
-        2. **Review** the forecast results across three different methods
-        3. **Analyze** the recommended accruals for the next month
-        4. **Export** results to Excel or CSV for further analysis
+        1. **Configure** your settings in the sidebar:
+           - ✅ Use default file (Input/Actual.xlsx) or upload new file
+           - 📝 Optional: Enter a custom forecast version name
+        2. **Click** the "🚀 Generate Forecast" button
+        3. **Review** the forecast results across four different methods
+        4. **Analyze** the recommended accruals for the next month
+        5. **Export** results to Excel or CSV for further analysis
+        
+        ### Default File:
+        - **Input/Actual.xlsx** - Place your Excel file here to use default option
         
         ### File Requirements:
         - Excel file (.xlsx or .xls)
         - Columns: SAP, GLCode, Row Labels, and monthly data columns
         - Historical spending data for accurate forecasting
+        
+        ### Quick Start:
+        1. Place your Excel file at **Input/Actual.xlsx**
+        2. Keep "Use default file" checked
+        3. Click "🚀 Generate Forecast"
         """)
 
 def accuracy_dashboard_page(db_manager):
     """Dashboard showing forecast accuracy metrics"""
     st.header("📈 Forecast Accuracy Dashboard")
     
-    # Get accuracy summary
+    # Check what data we have
+    forecast_versions = db_manager.get_forecast_versions()
     accuracy_df = db_manager.get_accuracy_summary()
     
+    # Show current database status
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("📊 Forecast Versions", len(forecast_versions))
+    with col2:
+        st.metric("📥 Accuracy Records", len(accuracy_df))
+    with col3:
+        if len(forecast_versions) > 0 and len(accuracy_df) == 0:
+            st.metric("⚠️ Status", "Need Actual Data", help="Add actual invoice data to calculate accuracy")
+        elif len(accuracy_df) > 0:
+            st.metric("✅ Status", "Tracking Active")
+        else:
+            st.metric("📋 Status", "No Data Yet")
+    
     if len(accuracy_df) == 0:
-        st.info("No accuracy data available yet. Generate some forecasts and add actual data to see accuracy metrics.")
+        if len(forecast_versions) > 0:
+            st.warning("🎯 **Forecasts found but no accuracy data yet!**")
+            st.info("""
+            **You have forecast data but haven't added actual invoice amounts yet.**
+            
+            To see accuracy metrics:
+            1. Go to **💾 Database Management** page
+            2. Use the **📥 Enter Actuals** tab
+            3. Add actual invoice data for any month you have forecasts for
+            4. Return here to see accuracy comparisons
+            
+            **Why accuracy tracking matters:**
+            - See which forecasting methods work best for your data
+            - System learns and improves over time
+            - Build confidence in forecast reliability
+            """)
+            
+            # Show available forecast versions
+            st.subheader("📊 Available Forecast Versions")
+            display_versions = forecast_versions.copy()
+            display_versions['created_date'] = pd.to_datetime(display_versions['created_date']).dt.strftime('%Y-%m-%d %H:%M')
+            display_versions['target_period'] = display_versions.apply(lambda row: f"{row['target_month']:02d}/{row['target_year']}", axis=1)
+            
+            st.dataframe(
+                display_versions[['version_name', 'target_period', 'created_date', 'notes']],
+                use_container_width=True
+            )
+        else:
+            st.info("""
+            **No forecast data found.**
+            
+            To get started:
+            1. Go to **🎯 Generate Forecast** page
+            2. Generate some forecasts first
+            3. Then add actual invoice data to track accuracy
+            """)
         return
     
     # Overall accuracy metrics
@@ -352,6 +451,13 @@ def database_management_page(db_manager):
         st.subheader("📥 Enter Actual Invoice Data")
         st.markdown("Enter actual invoice data to calculate forecast accuracy and improve future predictions.")
         
+        # Show available forecast versions to guide data entry
+        forecast_versions = db_manager.get_forecast_versions()
+        if len(forecast_versions) > 0:
+            st.info("💡 **Available forecast periods:** " + 
+                   ", ".join([f"{row['target_month']:02d}/{row['target_year']}" 
+                             for _, row in forecast_versions.head(5).iterrows()]))
+        
         col1, col2 = st.columns(2)
         
         with col1:
@@ -360,6 +466,17 @@ def database_management_page(db_manager):
         
         with col2:
             invoice_year = st.number_input("Invoice Year", min_value=2020, max_value=2030, value=2025)
+        
+        # Show if there are forecasts for this period
+        matching_forecasts = forecast_versions[
+            (forecast_versions['target_month'] == invoice_month) & 
+            (forecast_versions['target_year'] == invoice_year)
+        ]
+        
+        if len(matching_forecasts) > 0:
+            st.success(f"✅ Found {len(matching_forecasts)} forecast(s) for {datetime(2000, invoice_month, 1).strftime('%B')} {invoice_year}")
+        else:
+            st.warning(f"⚠️ No forecasts found for {datetime(2000, invoice_month, 1).strftime('%B')} {invoice_year}")
         
         # Manual entry form
         st.subheader("Manual Data Entry")
@@ -386,6 +503,24 @@ def database_management_page(db_manager):
                     
                 except Exception as e:
                     st.error(f"Error storing actual data: {str(e)}")
+        
+        # Quick sample data button for testing
+        if st.button("🧪 Add Sample Test Data (September 2025)"):
+            sample_data = {
+                'Consumables - Variable': 12500.00,
+                'Handling - Variable': 33000.00,
+                'Management - Fixed': 15000.00,
+                'Storage - Fixed': 27000.00,
+                'Storage - Variable': 6000.00
+            }
+            
+            try:
+                temp_system = AccrualsSystem(enable_database=True)
+                temp_system.store_actuals_in_database(sample_data, 9, 2025, "Sample test data")
+                st.success("✓ Added sample actual data for September 2025")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error adding sample data: {str(e)}")
         
         # File upload for batch entry
         st.subheader("Batch Upload from Excel")
