@@ -16,13 +16,22 @@ import numpy as np
 from datetime import datetime
 import os
 import sys
+from database_manager import DatabaseManager
 
 class AccrualsSystem:
-    def __init__(self, input_file='Input/Actual.xlsx'):
+    def __init__(self, input_file='Input/Actual.xlsx', enable_database=True):
         self.input_file = input_file
         self.data = None
         self.monthly_columns = []
         self.results = []
+        self.enable_database = enable_database
+        
+        # Initialize database manager if enabled
+        if self.enable_database:
+            self.db_manager = DatabaseManager()
+            print("✓ Database manager initialized")
+        else:
+            self.db_manager = None
         
     def load_data(self):
         """Load and validate the input Excel file"""
@@ -133,8 +142,25 @@ class AccrualsSystem:
         else:
             trend_forecast = simple_avg
         
-        # Final recommendation (average of three methods)
-        recommendation = (simple_avg + weighted_avg + trend_forecast) / 3
+        # Method 4: Seasonal Forecast (based on seasonal patterns)
+        seasonal_forecast = self._calculate_seasonal_forecast(
+            historical_values, historical_months, target_month, avg_weekly_rate
+        )
+        
+        # Get adaptive weights if database is enabled
+        if self.enable_database and self.db_manager:
+            weights = self.db_manager.get_adaptive_weights(category)
+            recommendation = (
+                simple_avg * weights['simple_avg'] +
+                weighted_avg * weights['weighted_avg'] +
+                trend_forecast * weights['trending_avg'] +
+                seasonal_forecast * weights['seasonal_forecast']
+            )
+            confidence_modifier = weights['confidence']
+        else:
+            # Final recommendation (equal weight average of four methods)
+            recommendation = (simple_avg + weighted_avg + trend_forecast + seasonal_forecast) / 4
+            confidence_modifier = 0.5
         
         return {
             'Category': category,
@@ -147,6 +173,7 @@ class AccrualsSystem:
             'Simple_Average': round(simple_avg, 2),
             'Weighted_Average': round(weighted_avg, 2),
             'Trending_Average': round(trend_forecast, 2),
+            'Seasonal_Forecast': round(seasonal_forecast, 2),
             'Recommended_Accrual': round(recommendation, 2),
             'Target_Month_Weeks': self.get_weeks_in_month(target_month),
             'Confidence': self._calculate_confidence(historical_values),
@@ -167,12 +194,81 @@ class AccrualsSystem:
             'Simple_Average': 0,
             'Weighted_Average': 0,
             'Trending_Average': 0,
+            'Seasonal_Forecast': 0,
             'Recommended_Accrual': 0,
             'Target_Month_Weeks': self.get_weeks_in_month(self.target_month),
             'Confidence': 'No Data',
             'Recent_Values': [],
             'Weekly_Adjustment': 'Not Applied (No Data)'
         }
+    
+    def _calculate_seasonal_forecast(self, historical_values, historical_months, target_month, fallback_weekly_rate):
+        """Calculate seasonal forecast based on historical patterns"""
+        try:
+            if len(historical_values) < 4:  # Need sufficient data for seasonal analysis
+                # Fallback to simple average approach
+                return self.convert_weekly_to_monthly(fallback_weekly_rate, target_month)
+            
+            # Create monthly patterns from historical data
+            monthly_patterns = {}
+            for i, month in enumerate(historical_months):
+                if month not in monthly_patterns:
+                    monthly_patterns[month] = []
+                monthly_patterns[month].append(historical_values[i])
+            
+            # Calculate average for each month
+            monthly_averages = {}
+            for month, values in monthly_patterns.items():
+                monthly_averages[month] = np.mean(values)
+            
+            # Check if we have data for the target month
+            if target_month in monthly_averages:
+                # Direct seasonal forecast - use historical average for this month
+                seasonal_value = monthly_averages[target_month]
+                
+                # Apply weekly adjustment to seasonal forecast
+                target_weeks = self.get_weeks_in_month(target_month)
+                seasonal_weekly_rate = seasonal_value / target_weeks
+                return seasonal_weekly_rate * target_weeks
+            
+            # If no direct data for target month, interpolate from seasonal patterns
+            if len(monthly_averages) >= 3:
+                # Calculate seasonal index for each month
+                overall_average = np.mean(list(monthly_averages.values()))
+                seasonal_indices = {month: avg/overall_average for month, avg in monthly_averages.items()}
+                
+                # Estimate seasonal index for target month
+                target_seasonal_index = self._estimate_seasonal_index(target_month, seasonal_indices)
+                
+                # Apply seasonal adjustment to overall average
+                seasonal_forecast = overall_average * target_seasonal_index
+                
+                # Apply weekly adjustment
+                target_weeks = self.get_weeks_in_month(target_month)
+                return (seasonal_forecast / target_weeks) * target_weeks
+            
+            # Fallback if not enough seasonal data
+            return self.convert_weekly_to_monthly(fallback_weekly_rate, target_month)
+            
+        except Exception as e:
+            # Fallback on error
+            return self.convert_weekly_to_monthly(fallback_weekly_rate, target_month)
+    
+    def _estimate_seasonal_index(self, target_month, seasonal_indices):
+        """Estimate seasonal index for target month based on available patterns"""
+        try:
+            # If we have adjacent months, interpolate
+            available_months = sorted(seasonal_indices.keys())
+            
+            if not available_months:
+                return 1.0
+            
+            # Find closest months
+            closest_month = min(available_months, key=lambda x: abs(x - target_month))
+            return seasonal_indices[closest_month]
+            
+        except Exception:
+            return 1.0  # Neutral seasonal effect
     
     def _calculate_confidence(self, values):
         """Calculate confidence level based on data consistency"""
@@ -201,7 +297,111 @@ class AccrualsSystem:
             forecast = self.analyze_category(row)
             self.results.append(forecast)
         
+        # Store in database if enabled
+        if self.enable_database and self.db_manager:
+            self.store_forecast_in_database()
+        
         return True
+    
+    def store_forecast_in_database(self, version_name=None):
+        """Store forecast results in database with version control"""
+        if not self.db_manager:
+            return None
+            
+        # Generate version name if not provided
+        if version_name is None:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            version_name = f"Auto_Forecast_{timestamp}"
+        
+        # Create forecast version
+        version_id = self.db_manager.create_forecast_version(
+            version_name=version_name,
+            target_month=self.target_month,
+            target_year=self.target_year,
+            data_file_path=os.path.abspath(self.input_file),
+            weekly_adjustment=True,  # Our system uses weekly adjustment
+            auto_fit=True,
+            parameters={
+                "monthly_columns_count": len(self.monthly_columns),
+                "data_range_start": self.monthly_columns[0].strftime('%Y-%m-%d') if self.monthly_columns else None,
+                "data_range_end": self.monthly_columns[-1].strftime('%Y-%m-%d') if self.monthly_columns else None,
+                "forecast_methods": ["Simple_Average", "Weighted_Average", "Trending_Average", "Seasonal_Forecast"]
+            },
+            notes=f"Automatic forecast for {self.target_month_name} {self.target_year}"
+        )
+        
+        # Convert results to DataFrame
+        results_df = pd.DataFrame(self.results)
+        
+        # Store forecasts
+        self.db_manager.store_forecasts(version_id, results_df)
+        
+        print(f"✓ Forecast stored in database (Version ID: {version_id})")
+        return version_id
+    
+    def store_actuals_in_database(self, actuals_data, invoice_month, invoice_year, data_source=None):
+        """Store actual invoice data in database
+        
+        Args:
+            actuals_data: Dictionary or Series with category -> amount mapping
+            invoice_month: Month of the invoices (1-12)
+            invoice_year: Year of the invoices
+            data_source: Source file or description
+        """
+        if not self.db_manager:
+            print("Database not enabled - cannot store actuals")
+            return
+            
+        # Convert to pandas Series if it's a dict
+        if isinstance(actuals_data, dict):
+            actuals_series = pd.Series(actuals_data)
+        else:
+            actuals_series = actuals_data
+            
+        self.db_manager.store_actuals(
+            actuals_series, 
+            invoice_month, 
+            invoice_year, 
+            data_source or "Manual entry"
+        )
+        
+        print(f"✓ Actual data stored for {invoice_month}/{invoice_year}")
+        
+        # Auto-calculate accuracy for recent forecasts
+        self.calculate_forecast_accuracy(invoice_month, invoice_year)
+    
+    def calculate_forecast_accuracy(self, actual_month, actual_year):
+        """Calculate accuracy for forecasts matching the actual month/year"""
+        if not self.db_manager:
+            return
+            
+        # Find forecast versions for this target month/year
+        versions_df = self.db_manager.get_forecast_versions(actual_month, actual_year)
+        
+        for _, version in versions_df.iterrows():
+            version_id = version['version_id']
+            print(f"Calculating accuracy for version {version_id}: {version['version_name']}")
+            
+            self.db_manager.calculate_accuracy_metrics(version_id, actual_month, actual_year)
+        
+        # Update adaptive weights based on new accuracy data
+        self.db_manager.update_adaptive_weights()
+        print("✓ Adaptive weights updated based on latest accuracy data")
+    
+    def get_adaptive_forecast(self, category_data):
+        """Generate forecast using adaptive weights based on historical accuracy"""
+        if not self.db_manager:
+            # Fallback to equal weights
+            return {
+                'simple_avg': 0.25,
+                'weighted_avg': 0.25,
+                'trending_avg': 0.25,
+                'seasonal_forecast': 0.25,
+                'confidence': 0.5
+            }
+            
+        category = category_data.get('Category', 'Unknown')
+        return self.db_manager.get_adaptive_weights(category)
     
     def export_html_report(self, output_file=None):
         """Export results to a beautiful HTML report"""
